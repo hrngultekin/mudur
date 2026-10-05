@@ -12,14 +12,32 @@ def mountpoint(path):
 
 def cgmanager_is_enabled():
     res = True
-
     enabled = set(os.listdir("/etc/mudur/services/enabled"))
     conditional = set(os.listdir("/etc/mudur/services/conditional"))
     enabled.union(conditional)
-
     if "cgmanager" not in enabled:
         res = False
     return res
+
+
+def cgroup2_subtree_control(extras=set(), logger=None):
+    default_controls = {"+cpuset", "+cpu", "+io", "+memory", "+pids"}
+    result = default_controls.union(set(extras))
+    controls_text = " ".join(result)
+
+    if logger:
+        logger.log("Adding controls to cgroup2 subtree_control file.")
+    try:
+        with open("/sys/fs/cgroup/cgroup.subtree_control", "w") as f:
+            f.write(controls_text)
+            f.flush()
+            os.fsync(f.fileno())
+        print "Added controls: " + controls_text
+    except IOError as e:
+        if logger:
+            logger.log("Error: " + str(e))
+        else:
+            print "Error: " + str(e)
 
 
 class Controller:
@@ -62,9 +80,18 @@ class Cgroupfs:
         self.mount_cgroup()
         self.find_controllers()
 
-        if cgmanager_is_enabled() or self.mounted_version() < 2:
+        if not cgmanager_is_enabled() and self.mounted_version() == 2:
+            cgroup2_subtree_control(logger=self.logger)
+        else:
             for cname, c in self.controllers.items():
                 c.mount()
+
+
+    def log(self, msg):
+        if self.logger:
+            self.logger.log(msg)
+        else:
+            print msg
 
     def check_fstab(self):
         found = False
@@ -107,10 +134,7 @@ class Cgroupfs:
 
     def mount_cgroup(self):
         if mountpoint("/sys/fs/cgroup") == False:
-            if self.logger:
-                self.logger.log(
-                    "Supperted cgroup version: %s" % self.supported_version()
-                )
+            self.log("Supperted cgroup version: %s" % self.supported_version())
 
             if cgmanager_is_enabled() or self.supported_version() == 1:
                 cmd = "mount -t tmpfs -o uid=0,gid=0,mode=0755 cgroup /sys/fs/cgroup"
@@ -119,11 +143,14 @@ class Cgroupfs:
                     msg += " 'cgmanager' service enabled."
             else:
                 msg = "Used cgroup version: 2."
-                cmd = "mount -t cgroup2 -o uid=0,gid=0,mode=0755 none /sys/fs/cgroup"
+                # cmd = "mount -t cgroup2 -o uid=0,gid=0,mode=0755 cgroup2 /sys/fs/cgroup"
+                cmd = "mount -t cgroup2 -o rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot cgroup2 /sys/fs/cgroup"
 
-            if self.logger:
-                self.logger.log(msg)
-            return os.system(cmd)
+            self.log(msg)
+            returncode = os.system(cmd)
+            if returncode:
+                self.log("mount returncode: %s" % returncode)
+            return returncode
 
     def find_controllers(self):
         for line in open("/proc/cgroups").readlines():
