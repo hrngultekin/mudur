@@ -1026,7 +1026,7 @@ def mount_tmpfs_run():
             break
     df.close()
     run_full("/bin/mount", "-t", "tmpfs", "-o", "nodev,nosuid,size=10%,mode=755", "tmpfs", "/run")
-    c = Cgroupfs() 
+    c = Cgroupfs(LOGGER)
 
 def mount_remote_filesystems():
     """Mounts remote filesystems."""
